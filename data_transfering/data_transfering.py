@@ -26,35 +26,30 @@ class DataTransfering:
         self.pg_con.close()
         self.pg_con = postgresql.open(self.pg_server +"/"+ self.db_name.lower())
 
-    def start(self,schemas):
-        _MAX_ROWS = 10000
+    def start(self, schemas):
+        _MAX_ROWS = 100
         for schema in schemas.values():
             for table in schema.tables:
+                s = "alter table {}.\"{}\" disable trigger all;".format(schema.name, table.name)
+                self.pg_con.execute(s)
+            for table in schema.tables:
                 self.cursor.execute('BEGIN TRANSACTION;')
-                self.cursor.execute(self.select_query(schema,table))
-                rows = self.cursor.fetchall()
-                query = ''
-                self.pg_con.execute('BEGIN TRANSACTION;')
-                self.pg_con.execute('SET CONSTRAINTS ALL DEFERRED;')
-                for row in rows:
-                    if rows.index(row) % _MAX_ROWS == 0 and rows.index(row) != 0:
+                self.cursor.execute(self.select_query(schema, table))
+                rows = self.cursor.fetchmany(size=_MAX_ROWS)
+                while rows:
+                    query = ''
+                    for row in rows:
+                        query += self.insert_query(schema, table, row) + ";\n"
+                    if query != '':
+                        query = 'BEGIN TRANSACTION;\n' + 'SET CONSTRAINTS ALL DEFERRED;\n' + query + 'COMMIT TRANSACTION;'
                         self.pg_con.execute(query)
-                        self.pg_con.execute('COMMIT TRANSACTION;')
-                        query = ''
-                        self.pg_con.execute('BEGIN TRANSACTION;')
-                        self.pg_con.execute('SET CONSTRAINTS ALL DEFERRED;')
-                    s = "alter table {}.\"{}\" disable trigger all;".format(schema.name,table.name)
-                    s += self.insert_query(schema, table, row) + ";\n"
-                    s += "alter table {}.\"{}\" enable trigger all;".format(schema.name,table.name)
-                    # print(s)
-                    query += s
-                if query!='':
-                    self.pg_con.execute(query)
-                    self.pg_con.execute('COMMIT TRANSACTION;')
+                    rows = self.cursor.fetchmany(size=_MAX_ROWS)
                 self.cursor.execute('COMMIT;')
+            for table in schema.tables:
+                s = "alter table {}.\"{}\" enable trigger all;".format(schema.name, table.name)
+                self.pg_con.execute(s)
 
-
-    def select_query(self,schema,table):
+    def select_query(self, schema, table):
         fields = []
         for field in table.fields:
             _str = '[{}]'.format(field.name)
